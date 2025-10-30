@@ -1,0 +1,136 @@
+// Increase MQTT packet buffer BEFORE including PubSubClient
+#define MQTT_MAX_PACKET_SIZE 2048
+
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <PubSubClient.h>
+
+// ==============================================================================
+// --- CONFIGURATION ---
+// ==============================================================================
+const char* ssid = "VED_TUF";
+const char* password = "lemaou3000";
+const char* mqtt_server = "broker.hivemq.com";
+const char* location_topic = "rapidroute/location/data";
+
+// This should be the IP address of your laptop (hotspot). Confirm on laptop with `ipconfig`/`ifconfig`.
+const char* laptopIp = "192.168.137.1";
+const int laptopPort = 5000;
+
+// ==============================================================================
+// --- GLOBAL OBJECTS ---
+// ==============================================================================
+WiFiClient wifiClient;
+PubSubClient client(wifiClient);
+
+// ==============================================================================
+// --- FUNCTIONS ---
+// ==============================================================================
+void setup_mqtt() {
+  client.setServer(mqtt_server, 1883);
+}
+
+void reconnect_mqtt() {
+  // Try to connect until successful
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    String clientId = "ESP32-Transmitter-";
+    clientId += String((uint32_t)esp_random(), HEX);
+    if (client.connect(clientId.c_str())) {
+      Serial.println("connected to MQTT broker");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" — retrying in 5s");
+      delay(5000);
+    }
+  }
+}
+
+// ==============================================================================
+// --- ARDUINO STANDARD FUNCTIONS ---
+// ==============================================================================
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  Serial.println("\n\n--- Transmitter Module Active ---");
+
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to WiFi");
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(250);
+    Serial.print(".");
+    // optional timeout to avoid endless loop
+    if (millis() - start > 30000) {
+      Serial.println("\nFailed to connect to WiFi within 30s.");
+      break;
+    }
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nWiFi Connected!");
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("Warning: WiFi not connected. Check SSID/password and hotspot settings.");
+  }
+
+  setup_mqtt();
+}
+
+void loop() {
+  // Ensure WiFi
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi disconnected. Trying to reconnect...");
+    WiFi.reconnect();
+    delay(2000);
+    return;
+  }
+
+  // Ensure MQTT connected
+  if (!client.connected()) {
+    reconnect_mqtt();
+  }
+  client.loop();
+
+  // Build HTTP URL to laptop server
+  String serverPath = "http://";
+  serverPath += laptopIp;
+  serverPath += ":";
+  serverPath += String(laptopPort);
+  serverPath += "/location";
+
+  HTTPClient http;
+  http.begin(serverPath); // HTTP
+  // short GET interval; tune per your requirements
+  int httpResponseCode = http.GET();
+
+  if (httpResponseCode == 200) {
+    String payload = http.getString();
+    Serial.println("--- Data Received from Server ---");
+    Serial.println(payload);
+
+    // Publish payload to MQTT
+    bool published = client.publish(location_topic, payload.c_str());
+    if (published) {
+      Serial.println("MQTT message published successfully.");
+    } else {
+      Serial.println("ERROR: Failed to publish MQTT message (maybe too large?).");
+      // Optional: try splitting or compressing payload here
+    }
+  } else {
+    Serial.print("Error on HTTP request: ");
+    Serial.println(httpResponseCode);
+    // If 500 from server, server sent HTML - don't attempt to publish that.
+    if (httpResponseCode >= 400 && httpResponseCode < 600) {
+      String errBody = http.getString();
+      Serial.println("Server response body:");
+      Serial.println(errBody);
+    }
+  }
+  http.end();
+
+  // Delay between polls — increase if OSRM route is large or to reduce load
+  delay(500); // adjust as needed
+}
