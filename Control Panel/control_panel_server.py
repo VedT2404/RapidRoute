@@ -7,9 +7,8 @@ from flask import Flask, jsonify, render_template_string, request
 from flask_cors import CORS
 import paho.mqtt.client as mqtt
 
-# ==============================================================================
-# --- CONFIGURATION & GLOBAL VARIABLES ---
-# ==============================================================================
+#  GLOBAL VARIABLES 
+
 SIMULATED_SPEED_KPH = 60
 MQTT_BROKER = "broker.hivemq.com"
 MQTT_PORT = 1883
@@ -20,7 +19,7 @@ WAYPOINT_PROXIMITY_KM = 0.1
 app = Flask(__name__)
 CORS(app) # Enable Cross-Origin Resource Sharing for the frontend
 
-# --- Final, Hyper-Accurate, Manually Verified Coordinates ---
+#  Final, Accurate, Manually Verified Coordinates 
 KNOWN_SIGNALS = {
     "Chakli Circle": (22.308333, 73.165278),
     "Diwalipura Circle": (22.301806, 73.165500),
@@ -37,7 +36,7 @@ KNOWN_SIGNALS = {
 SIGNALS = {}
 SIGNAL_NAME_TO_ID = {}
 SIGNAL_ID_TO_NAME = {}
-# --- State variables for the active route ---
+#  State variables for the active route 
 route_points = []
 route_signal_waypoints = []
 current_point_index = 0
@@ -48,20 +47,18 @@ signals_passed_on_current_route = []
 
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, "ControlPanelServer")
 
-# ==============================================================================
-# --- HELPER FUNCTIONS ---
-# ==============================================================================
+#  HELPER FUNCTIONS 
 
 def setup_signal_data():
-    """Initializes the signal data using the hyper-accurate hardcoded list."""
+    """Initializes the signal data using the hardcoded list."""
     global SIGNALS, SIGNAL_NAME_TO_ID, SIGNAL_ID_TO_NAME
-    print(f"--- Initializing signal data from high-accuracy list ---", flush=True)
+    print(f" Initializing signal data from list ", flush=True)
     SIGNALS = KNOWN_SIGNALS
     # Sort the signals alphabetically to create a consistent ID mapping
     sorted_signal_names = sorted(SIGNALS.keys())
     SIGNAL_ID_TO_NAME = {i + 1: name for i, name in enumerate(sorted_signal_names)}
     SIGNAL_NAME_TO_ID = {name: i for i, name in SIGNAL_ID_TO_NAME.items()}
-    print(f"--- Successfully loaded and indexed {len(SIGNALS)} signals. ---", flush=True)
+    print(f" Successfully loaded and indexed {len(SIGNALS)} signals. ", flush=True)
     return True
 
 def haversine(lat1, lon1, lat2, lon2):
@@ -76,8 +73,8 @@ def haversine(lat1, lon1, lat2, lon2):
 
 def get_osrm_route(start_coord, end_coord):
     """
-    Gets a route from OSRM, using the 'driving' profile to find the
-    fastest, most realistic route for a vehicle.
+    Gets a route from OSRM to find the
+    optimized route for a vehicle.
     OSRM expects (longitude, latitude).
     """
     start_lon, start_lat = start_coord
@@ -115,7 +112,7 @@ def get_next_simulated_location():
     global current_point_index, previous_location
     if not route_points or current_point_index >= len(route_points):
         if route_points:
-            print("--- End of manual route reached. Waiting for new route from control panel. ---", flush=True)
+            print(" End of manual route reached. Waiting for new route from control panel. ", flush=True)
         if route_points:
             return route_points[-1], route_points[-2] if len(route_points) > 1 else route_points[-1]
         return None, None
@@ -135,14 +132,12 @@ def find_next_signal_on_route(current_lat, current_lon):
         next_signal_lat, next_signal_lon = SIGNALS.get(next_signal_name, (0,0))
         if haversine(current_lat, current_lon, next_signal_lat, next_signal_lon) < 0.05:
             if next_signal_name not in signals_passed_on_current_route:
-                print(f"--- Vehicle has arrived at {next_signal_name} ---", flush=True)
+                print(f" Vehicle has arrived at {next_signal_name} ", flush=True)
                 signals_passed_on_current_route.append(next_signal_name)
         else:
             return next_signal_name
 
-# ==============================================================================
-# --- WEB SERVER LOGIC (API for ESP32 and Frontend) ---
-# ==============================================================================
+#  WEB SERVER LOGIC (API for ESP32 and Frontend) 
 
 @app.route('/')
 def index():
@@ -169,7 +164,7 @@ def start_manual_route():
     current_start_name = SIGNAL_ID_TO_NAME[start_id]
     current_destination_name = SIGNAL_ID_TO_NAME[end_id]
     
-    print(f"\n--- Manual route requested: {current_start_name} -> {current_destination_name} ---", flush=True)
+    print(f"\n Manual route requested: {current_start_name} -> {current_destination_name} ", flush=True)
     
     start_coord = SIGNALS[current_start_name]
     end_coord = SIGNALS[current_destination_name]
@@ -183,7 +178,7 @@ def start_manual_route():
         route_points = [(lat, lon) for lon, lat in full_route_coords]
         route_signal_waypoints = find_signals_on_path(route_points, current_start_name, current_destination_name)
         
-        print("\n--- Custom Route Ready! ---")
+        print("\n Custom Route Ready! ")
         print(f"Full Path: {' -> '.join(route_signal_waypoints)}")
         
         current_point_index, previous_location = 0, None
@@ -191,7 +186,7 @@ def start_manual_route():
         
         route_payload = json.dumps(route_points)
         mqtt_client.publish(MQTT_ROUTE_TOPIC, route_payload, qos=1)
-        print("--- Route announced to map via MQTT ---", flush=True)
+        print(" Route announced to map via MQTT ", flush=True)
         return jsonify({"message": "Simulation started successfully!", "route": route_signal_waypoints})
     else:
         return jsonify({"message": "Error: Could not calculate route."}), 500
@@ -217,16 +212,15 @@ def get_route_for_map():
     """Provides the full route coordinates for the web map."""
     return jsonify(route_points) if route_points else jsonify([])
 
-# ==============================================================================
-# --- MAIN EXECUTION BLOCK ---
-# ==============================================================================
+#  MAIN EXECUTION BLOCK 
+
 if __name__ == '__main__':
     if setup_signal_data():
-        print("\n--- Connecting server's MQTT client... ---", flush=True)
+        print("\n Connecting server's MQTT client... ", flush=True)
         mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
         mqtt_client.loop_start()
         
-        print(f"\n--- Server is ready. ---", flush=True)
+        print(f"\n Server is ready. ", flush=True)
         print(f"To start the simulation, open your browser to http://127.0.0.1:5000")
         app.run(host='0.0.0.0', port=5000)
 
