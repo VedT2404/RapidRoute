@@ -13,7 +13,7 @@
 #include <ArduinoJson.h>
 
 // --- PASTE YOUR GOOGLE GEOLOCATION API KEY HERE ---
-const char* GOOGLE_API_KEY = "AIzaSyCuoI64d9PNu8WZM1rG5RlZxhqQRA0OBN0";
+const char* GOOGLE_API_KEY = "Your API"; 
 
 void connect_to_wifi(const char* ssid, const char* password) {
   Serial.begin(115200);
