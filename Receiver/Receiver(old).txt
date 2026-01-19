@@ -224,4 +224,3 @@ void loop() {
     }
     client.loop(); // This allows the MQTT client to process incoming messages
 }
-

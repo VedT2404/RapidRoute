@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RapidRoute | Mission Control Dashboard</title>
+    <!-- External Dependencies: MQTT, Leaflet Map, and Fonts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        /* --- GLOBAL DARK THEME (Obsidian Night) --- */
+        :root {
+            --bg-main: #0d1117;
+            --bg-panel: #161b22;
+            --bg-header: #21262d;
+            --border: #30363d;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --accent-blue: #58a6ff;
+            --accent-green: #238636;
+            --accent-green-hover: #2ea043;
+            --accent-gold: #d29922;
+            --accent-red: #f85149;
+        }
+
+        body, html {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-main);
+            color: var(--text-primary);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            overflow: hidden;
+        }
+
+        /* --- DASHBOARD LAYOUT --- */
+        .dashboard {
+            display: grid;
+            grid-template-columns: 340px 1fr 300px;
+            height: 100vh;
+            gap: 1px; /* Creates clean borders between panels */
+            background-color: var(--border);
+        }
+
+        .panel {
+            background-color: var(--bg-panel);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .panel-header {
+            padding: 12px 16px;
+            background-color: var(--bg-header);
+            border-bottom: 1px solid var(--border);
+            font-weight: 700;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        /* --- CONTROLS & LOGS (Left) --- */
+        .sidebar-content {
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .field-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        label {
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        select {
+            background-color: var(--bg-main);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        select:focus { border-color: var(--accent-blue); }
+
+        button {
+            background-color: var(--accent-green);
+            color: white;
+            border: none;
+            padding: 14px;
+            border-radius: 6px;
+            font-weight: 700;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: 0.2s;
+            margin-top: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+
+        button:hover { background-color: var(--accent-green-hover); transform: translateY(-1px); }
+        button:active { transform: translateY(0); }
+
+        #telemetry-log {
+            flex-grow: 1;
+            background-color: #010409;
+            margin: 0 16px 16px 16px;
+            border-radius: 6px;
+            padding: 12px;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 0.75rem;
+            overflow-y: auto;
+            border: 1px solid var(--border);
+            line-height: 1.5;
+        }
+
+        .log-entry { margin-bottom: 6px; border-bottom: 1px solid #161b22; padding-bottom: 4px; }
+        .log-info { color: var(--text-secondary); }
+        .log-alert { color: var(--accent-gold); font-weight: bold; }
+        .log-arrival { color: #3fb950; font-weight: bold; }
+
+        /* --- LIVE MAP (Center) --- */
+        #map-container { position: relative; flex-grow: 1; }
+        #map { height: 100%; width: 100%; background-color: #0b0e14; }
+
+        /* Custom Map Icons */
+        .vehicle-marker { font-size: 28px; filter: drop-shadow(0 0 5px rgba(0,0,0,0.8)); text-align: center; }
+
+        /* --- TRAFFIC SIGNALS (Right) --- */
+        .signals-panel {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            flex-grow: 1;
+            padding: 20px;
+            background-color: #0d1117;
+        }
+
+        .signal-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-template-rows: repeat(3, 1fr);
+            gap: 16px;
+            width: 240px;
+        }
+
+        .signal-unit {
+            background-color: var(--bg-panel);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+
+        .lamp {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            margin: 3px;
+            background-color: #21262d;
+            transition: 0.3s;
+            opacity: 0.15;
+        }
+
+        .lamp.red { background-color: var(--accent-red); }
+        .lamp.green { background-color: #3fb950; }
+        
+        /* High visibility active state */
+        .lamp.active { 
+            opacity: 1; 
+            box-shadow: 0 0 15px currentColor; 
+        }
+
+        .signal-label {
+            font-size: 0.65rem;
+            font-weight: 800;
+            color: var(--text-secondary);
+            margin-top: 6px;
+        }
+
+        /* Signal Grid Positioning */
+        [data-dir="North"] { grid-column: 2; grid-row: 1; }
+        [data-dir="North-East"] { grid-column: 3; grid-row: 1; }
+        [data-dir="East"] { grid-column: 3; grid-row: 2; }
+        [data-dir="South-East"] { grid-column: 3; grid-row: 3; }
+        [data-dir="South"] { grid-column: 2; grid-row: 3; }
+        [data-dir="South-West"] { grid-column: 1; grid-row: 3; }
+        [data-dir="West"] { grid-column: 1; grid-row: 2; }
+        [data-dir="North-West"] { grid-column: 1; grid-row: 1; }
+
+        /* Map UI tweaks */
+        .leaflet-bar a { background-color: var(--bg-panel) !important; color: white !important; border-color: var(--border) !important; }
+    </style>
+</head>
+<body>
+
+<div class="dashboard">
+    <!-- LEFT PANEL -->
+    <section class="panel">
+        <div class="panel-header">
+            <span>Route Planner</span>
+            <span id="mqtt-status" style="color: var(--accent-red); font-size: 0.6rem;">● Offline</span>
+        </div>
+        <div class="sidebar-content">
+            <div class="field-group">
+                <label>STARTING POINT</label>
+                <select id="start-node"></select>
+            </div>
+            <div class="field-group">
+                <label>DESTINATION</label>
+                <select id="end-node"></select>
+            </div>
+            <button id="btn-start">🚀 START SIMULATION</button>
+        </div>
+        <div class="panel-header">Live Telemetry</div>
+        <div id="telemetry-log"></div>
+    </section>
+
+    <!-- CENTER PANEL -->
+    <section id="map-container">
+        <div id="map"></div>
+    </section>
+
+    <!-- RIGHT PANEL -->
+    <section class="panel">
+        <div class="panel-header">Intersection Management</div>
+        <div class="signals-panel">
+            <div class="signal-grid">
+                <!-- 8 Directional Units -->
+                <div class="signal-unit" data-dir="North-West"><div class="lamp red active"></div><div class="lamp green"></div><div class="signal-label">NW</div></div>
+                <div class="signal-unit" data-dir="North"><div class="lamp red active"></div><div class="lamp green"></div><div class="signal-label">N</div></div>
+                <div class="signal-unit" data-dir="North-East"><div class="lamp red active"></div><div class="lamp green"></div><div class="signal-label">NE</div></div>
+                <div class="signal-unit" data-dir="West"><div class="lamp red active"></div><div class="lamp green"></div><div class="signal-label">W</div></div>
+                <div style="grid-column: 2; grid-row: 2; display: flex; justify-content: center; align-items: center; font-size: 2rem; opacity: 0.8;">🚦</div>
+                <div class="signal-unit" data-dir="East"><div class="lamp red active"></div><div class="lamp green"></div><div class="signal-label">E</div></div>
+                <div class="signal-unit" data-dir="South-West"><div class="lamp red active"></div><div class="lamp green"></div><div class="signal-label">SW</div></div>
+                <div class="signal-unit" data-dir="South"><div class="lamp red active"></div><div class="lamp green"></div><div class="signal-label">S</div></div>
+                <div class="signal-unit" data-dir="South-East"><div class="lamp red active"></div><div class="lamp green"></div><div class="signal-label">SE</div></div>
+            </div>
+        </div>
+    </section>
+</div>
+
+<script>
+    // --- Configuration ---
+    const signals = [
+        {id: 1, name: "Chakli Circle", lat: 22.308333, lon: 73.165278},
+        {id: 2, name: "Diwalipura Circle", lat: 22.301806, lon: 73.165500},
+        {id: 3, name: "Elora T-Junction", lat: 22.315333, lon: 73.161444},
+        {id: 4, name: "Genda Circle", lat: 22.309944, lon: 73.158667},
+        {id: 5, name: "Gotri Circle", lat: 22.315556, lon: 73.138000},
+        {id: 6, name: "Hari Nagar Char Rasta", lat: 22.311278, lon: 73.153167},
+        {id: 7, name: "ISKCON Circle", lat: 22.303361, lon: 73.151833},
+        {id: 8, name: "Manisha Circle", lat: 22.296306, lon: 73.164583},
+        {id: 9, name: "Nilamber Circle", lat: 22.302000, lon: 73.138944},
+        {id: 10, name: "Tandalja T-Junction", lat: 22.280444, lon: 73.153194}
+    ];
+
+    const MQTT_BROKER = "broker.hivemq.com";
+    const MQTT_PORT = 8884;
+    const TOPIC_LOC = "rapidroute/location/data";
+    const CLIENT_ID = "RapidRouteControl-" + Math.floor(Math.random() * 10000);
+
+    const ALERT_DIST = 800; // Meters
+    const ARRIVAL_DIST = 50; // Meters
+
+    // --- State Variables ---
+    let map, vehicleMarker, routeLine;
+    let currentNextSignalName = "";
+    let prevDistance = 999999;
+    let hasAlertedForSignal = false;
+    let activeDestId = null;
+
+    // --- Geospatial Utils ---
+    function getDistance(lat1, lon1, lat2, lon2) {
+        const R = 6371000;
+        const rad = d => d * Math.PI / 180;
+        const dLat = rad(lat2 - lat1), dLon = rad(lon2 - lon1);
+        const a = Math.sin(dLat/2)**2 + Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(dLon/2)**2;
+        return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    function getBearing(lat1, lon1, lat2, lon2) {
+        const rad = d => d * Math.PI / 180, deg = r => r * 180 / Math.PI;
+        const dLon = rad(lon2 - lon1);
+        const y = Math.sin(dLon) * Math.cos(rad(lat2));
+        const x = Math.cos(rad(lat1)) * Math.sin(rad(lat2)) - Math.sin(rad(lat1)) * Math.cos(rad(lat2)) * Math.cos(dLon);
+        return (deg(Math.atan2(y, x)) + 360) % 360;
+    }
+
+    function getDirection(bearing) {
+        const labels = ["North", "North-East", "East", "South-East", "South", "South-West", "West", "North-West"];
+        return labels[Math.round(bearing / 45) % 8];
+    }
+
+    // --- UI Logic ---
+    function updateLights(dir = null) {
+        // Reset all
+        document.querySelectorAll('.lamp.green').forEach(l => l.classList.remove('active'));
+        document.querySelectorAll('.lamp.red').forEach(l => l.classList.add('active'));
+        
+        if (dir) {
+            const unit = document.querySelector(`.signal-unit[data-dir="${dir}"]`);
+            if (unit) {
+                unit.querySelector('.green').classList.add('active');
+                unit.querySelector('.red').classList.remove('active');
+            }
+        }
+    }
+
+    function log(msg, type = 'info') {
+        const container = document.getElementById('telemetry-log');
+        const entry = document.createElement('div');
+        entry.className = 'log-entry ' + (type === 'alert' ? 'log-alert' : type === 'arrival' ? 'log-arrival' : 'log-info');
+        entry.innerHTML = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        container.prepend(entry);
+    }
+
+    // --- Initialization ---
+    function initMap() {
+        map = L.map('map', { zoomControl: false }).setView([22.3072, 73.1812], 14);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; CARTO'
+        }).addTo(map);
+        routeLine = L.polyline([], { color: '#58a6ff', weight: 4, opacity: 0.8 }).addTo(map);
+    }
+
+    async function handleSimStart() {
+        const s = document.getElementById('start-node').value;
+        const e = document.getElementById('end-node').value;
+        if (s === e) { alert("Please select different intersections."); return; }
+
+        log("Requesting optimized route from OSRM...", 'info');
+        try {
+            await fetch('/start-manual-route', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ start: s, end: e })
+            });
+            const res = await fetch('/route');
+            const data = await res.json();
+            routeLine.setLatLngs(data);
+            map.fitBounds(routeLine.getBounds(), { padding: [50, 50] });
+            log("Route active. Simulation broadcasting...", 'info');
+        } catch (err) { log("Server communication error.", 'alert'); }
+    }
+
+    function initMqtt() {
+        const statusDot = document.getElementById('mqtt-status');
+        const client = new Paho.MQTT.Client(MQTT_BROKER, MQTT_PORT, CLIENT_ID);
+
+        client.onMessageArrived = (msg) => {
+            const data = msg.payloadString.split(',');
+            if (data.length < 7) return;
+
+            const lat = parseFloat(data[0]), lon = parseFloat(data[1]);
+            const dId = parseInt(data[5]), nextId = parseInt(data[6]);
+            const target = signals.find(s => s.id === nextId);
+
+            if (!target) return;
+
+            // Update Map Marker
+            if (!vehicleMarker) {
+                const icon = L.divIcon({ html: '🚗', className: 'vehicle-marker', iconSize: [30, 30] });
+                vehicleMarker = L.marker([lat, lon], { icon }).addTo(map);
+            } else { vehicleMarker.setLatLng([lat, lon]); }
+
+            // Sync Map if route changed
+            if (dId !== activeDestId) {
+                activeDestId = dId;
+                fetch('/route').then(r => r.json()).then(pts => routeLine.setLatLngs(pts));
+            }
+
+            // Logic Core
+            const dist = getDistance(lat, lon, target.lat, target.lon);
+            if (currentNextSignalName !== target.name) {
+                currentNextSignalName = target.name;
+                prevDistance = 999999;
+                hasAlertedForSignal = false;
+            }
+
+            if (dist <= ARRIVAL_DIST && !hasAlertedForSignal) {
+                log(`VEHICLE REACHED INTERSECTION: ${target.name}`, 'arrival');
+                hasAlertedForSignal = true;
+                updateLights(); // Reset to red
+            } else if (dist <= ALERT_DIST && dist < prevDistance && !hasAlertedForSignal) {
+                const bearing = getBearing(lat, lon, target.lat, target.lon);
+                const approachFrom = getDirection((bearing + 180) % 360);
+                log(`PRIORITY CLEARANCE: Approaching ${target.name} from ${approachFrom}`, 'alert');
+                updateLights(approachFrom);
+            } else if (dist > ALERT_DIST) {
+                updateLights(); 
+            }
+            
+            prevDistance = dist;
+        };
+
+        client.connect({ 
+            useSSL: true, 
+            onSuccess: () => {
+                statusDot.textContent = "● Online";
+                statusDot.style.color = "#238636";
+                client.subscribe(TOPIC_LOC);
+                log("MQTT Telemetry Link Established.", 'info');
+            }
+        });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        initMap();
+        initMqtt();
+        
+        const s1 = document.getElementById('start-node'), s2 = document.getElementById('end-node');
+        signals.forEach(s => {
+            const opt = new Option(`${s.id}: ${s.name}`, s.id);
+            s1.add(opt.cloneNode(true));
+            s2.add(opt);
+        });
+
+        document.getElementById('btn-start').addEventListener('click', handleSimStart);
+    });
+</script>
+</body>
+</html>
